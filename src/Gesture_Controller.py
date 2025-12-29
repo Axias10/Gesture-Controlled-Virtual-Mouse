@@ -6,10 +6,20 @@ import pyautogui
 import math
 from enum import IntEnum
 from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+try:
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    WINDOWS_AUDIO = True
+except ImportError:
+    WINDOWS_AUDIO = False
+    print("Note: Windows audio control libraries (comtypes/pycaw) not available on this platform")
 from google.protobuf.json_format import MessageToDict
-import screen_brightness_control as sbcontrol
+try:
+    import screen_brightness_control as sbcontrol
+    BRIGHTNESS_CONTROL = True
+except (ImportError, NotImplementedError):
+    BRIGHTNESS_CONTROL = False
+    print("Note: screen_brightness_control not available on this platform")
 
 pyautogui.FAILSAFE = False
 mp_drawing = mp.solutions.drawing_utils
@@ -289,26 +299,50 @@ class Controller:
     
     def changesystembrightness():
         """sets system brightness based on 'Controller.pinchlv'."""
-        currentBrightnessLv = sbcontrol.get_brightness(display=0)/100.0
-        currentBrightnessLv += Controller.pinchlv/50.0
-        if currentBrightnessLv > 1.0:
-            currentBrightnessLv = 1.0
-        elif currentBrightnessLv < 0.0:
-            currentBrightnessLv = 0.0       
-        sbcontrol.fade_brightness(int(100*currentBrightnessLv) , start = sbcontrol.get_brightness(display=0))
+        if BRIGHTNESS_CONTROL:
+            currentBrightnessLv = sbcontrol.get_brightness(display=0)/100.0
+            currentBrightnessLv += Controller.pinchlv/50.0
+            if currentBrightnessLv > 1.0:
+                currentBrightnessLv = 1.0
+            elif currentBrightnessLv < 0.0:
+                currentBrightnessLv = 0.0
+            sbcontrol.fade_brightness(int(100*currentBrightnessLv) , start = sbcontrol.get_brightness(display=0))
+        else:
+            # macOS: brightness control not available via this library
+            print("Brightness control gesture detected but not supported on macOS")
     
     def changesystemvolume():
         """sets system volume based on 'Controller.pinchlv'."""
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = cast(interface, POINTER(IAudioEndpointVolume))
-        currentVolumeLv = volume.GetMasterVolumeLevelScalar()
-        currentVolumeLv += Controller.pinchlv/50.0
-        if currentVolumeLv > 1.0:
-            currentVolumeLv = 1.0
-        elif currentVolumeLv < 0.0:
-            currentVolumeLv = 0.0
-        volume.SetMasterVolumeLevelScalar(currentVolumeLv, None)
+        if WINDOWS_AUDIO:
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            currentVolumeLv = volume.GetMasterVolumeLevelScalar()
+            currentVolumeLv += Controller.pinchlv/50.0
+            if currentVolumeLv > 1.0:
+                currentVolumeLv = 1.0
+            elif currentVolumeLv < 0.0:
+                currentVolumeLv = 0.0
+            volume.SetMasterVolumeLevelScalar(currentVolumeLv, None)
+        else:
+            # macOS/Linux: use osascript or alternative method
+            import subprocess
+            import platform
+            if platform.system() == 'Darwin':  # macOS
+                try:
+                    # Get current volume
+                    result = subprocess.run(['osascript', '-e', 'output volume of (get volume settings)'],
+                                          capture_output=True, text=True)
+                    currentVolumeLv = int(result.stdout.strip()) / 100.0
+                    currentVolumeLv += Controller.pinchlv/50.0
+                    if currentVolumeLv > 1.0:
+                        currentVolumeLv = 1.0
+                    elif currentVolumeLv < 0.0:
+                        currentVolumeLv = 0.0
+                    # Set new volume
+                    subprocess.run(['osascript', '-e', f'set volume output volume {int(currentVolumeLv * 100)}'])
+                except Exception as e:
+                    print(f"Could not adjust volume: {e}")
     
     def scrollVertical():
         """scrolls on screen vertically."""
@@ -596,5 +630,5 @@ class GestureController:
         cv2.destroyAllWindows()
 
 # uncomment to run directly
-# gc1 = GestureController()
-# gc1.start()
+gc1 = GestureController()
+gc1.start()
